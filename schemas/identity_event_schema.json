@@ -1,0 +1,306 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12",
+  "$id": "https://schemas.jackhenry.com/idr/identity-event/v1",
+  "title": "IdentityEvent",
+  "description": "Normalized identity signal produced by all payment adapters and fed into the Resolution Engine. All PII fields are pre-tokenized by the PII Vault before this event is published. Corresponds to stories S-05-02, S-06-01, S-06-03, S-10-01, S-11-01, S-12-01, S-13-01, S-14-01, S-15-01, S-16-01.",
+  "type": "object",
+  "required": [
+    "event_id",
+    "fi_id",
+    "source_system",
+    "source_product",
+    "event_timestamp",
+    "party_role",
+    "entity_type"
+  ],
+  "properties": {
+
+    "event_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Globally unique event ID (UUID v4). Used for idempotency deduplication in the resolution engine."
+    },
+
+    "fi_id": {
+      "type": "string",
+      "maxLength": 64,
+      "description": "Financial institution tenant identifier. Must match the FI's registered fi_id in the platform."
+    },
+
+    "source_system": {
+      "type": "string",
+      "maxLength": 64,
+      "enum": [
+        "silverlake",
+        "symitar",
+        "eps_ach",
+        "eps_check_rdc",
+        "paycenter",
+        "payrailz",
+        "jh_wires",
+        "ipay",
+        "banno",
+        "bps",
+        "tap2local"
+      ],
+      "description": "The originating system/adapter. Determines normalization rules and available blocking keys."
+    },
+
+    "source_product": {
+      "type": "string",
+      "maxLength": 64,
+      "enum": [
+        "silverlake_cif",
+        "symitar_cif",
+        "ach_ppd",
+        "ach_web",
+        "ach_tel",
+        "ach_ccd",
+        "ach_ctx",
+        "ach_arc",
+        "ach_pop",
+        "ach_boc",
+        "ach_sdach",
+        "rtp",
+        "fednow",
+        "zelle",
+        "fedwire",
+        "swift_corpay",
+        "payrailz_p2p",
+        "payrailz_a2a",
+        "payrailz_billpay",
+        "ipay_bill_pay",
+        "ipay_cardpay",
+        "ipay_p2p",
+        "banno_transfer",
+        "banno_zelle",
+        "banno_billpay",
+        "bps_ach_ccd",
+        "bps_payroll",
+        "bps_remittance",
+        "check21",
+        "rdc",
+        "tap2local_card"
+      ],
+      "description": "Specific payment product/SEC code. Used for entity_type inference (SEC code → INDIVIDUAL/BUSINESS) and blocking key strategy selection."
+    },
+
+    "source_transaction_id": {
+      "type": "string",
+      "maxLength": 255,
+      "description": "Native transaction ID from the source system (e.g. ACH trace number, wire IMAD). Used for deduplication at the adapter level."
+    },
+
+    "event_timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the source event occurred (not the adapter processing time)."
+    },
+
+    "party_role": {
+      "type": "string",
+      "enum": ["ORIGINATOR", "DESTINATION", "BENEFICIARY", "PAYOR", "PAYEE"],
+      "description": "Role of this party in the transaction. Each transaction typically produces two IdentityEvents: one per party."
+    },
+
+    "entity_type": {
+      "type": "string",
+      "enum": ["INDIVIDUAL", "BUSINESS", "UNKNOWN"],
+      "description": "Inferred entity type. For ACH: derived from SEC code (S-06-02). UNKNOWN triggers alert."
+    },
+
+    "blocking_keys": {
+      "type": "object",
+      "description": "Pre-computed blocking key values. All PII replaced by tokens before this object is populated. Any key may be null if the signal is absent from the source event.",
+      "properties": {
+        "bk1_fi_hash": {
+          "type": ["string", "null"],
+          "maxLength": 64,
+          "description": "BK-1: SHA-256(SSN/EIN + platform_salt + fi_id). Per-FI hash for Tier-1 resolution."
+        },
+        "bk1_global_hash": {
+          "type": ["string", "null"],
+          "maxLength": 64,
+          "description": "BK-1 global: SHA-256(SSN/EIN + platform_salt). Cross-FI platform hash for EP-08 global linking only."
+        },
+        "bk2_token": {
+          "type": ["string", "null"],
+          "maxLength": 255,
+          "description": "BK-2: FPE(account_number) + ':' + routing_number. Routing is public; only account number is tokenized."
+        },
+        "bk3_email_token": {
+          "type": ["string", "null"],
+          "maxLength": 64,
+          "description": "BK-3: HMAC-SHA256(lowercase(email), fi_hmac_key). Per-FI salt; no cross-FI email matching possible."
+        },
+        "bk4_phone_token": {
+          "type": ["string", "null"],
+          "maxLength": 64,
+          "description": "BK-4: HMAC-SHA256(E.164(phone), fi_hmac_key). Also used for Zelle phone proxy (S-10-02, S-14-02)."
+        },
+        "bk5_core_cif_key": {
+          "type": ["string", "null"],
+          "maxLength": 255,
+          "description": "BK-5: source_system + ':' + source_customer_id. e.g. 'silverlake:CIF12345'."
+        },
+        "bk6_name_zip": {
+          "type": ["string", "null"],
+          "maxLength": 255,
+          "description": "BK-6: UPPERCASE(last_name_normalized) + ':' + zip5. Secondary signal only; never sole blocking key (S-03-06)."
+        },
+        "bk7_wire_token": {
+          "type": ["string", "null"],
+          "maxLength": 255,
+          "description": "BK-7: swift_bic + ':' + FPE(IBAN). International wire beneficiary (S-12-02). Resolves to Tier 4."
+        },
+        "bk8_pan_token": {
+          "type": ["string", "null"],
+          "maxLength": 255,
+          "description": "BK-8: card_network_token or FPE(PAN). Card-present only. Always Tier 5; never auto-merge (S-16-03)."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "name_display": {
+      "type": ["string", "null"],
+      "maxLength": 255,
+      "description": "Non-PII display name (full name for individuals, business name for businesses). Used for BK-6 normalization and display only — not stored as identity signal."
+    },
+
+    "routing_number": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9]{9}$",
+      "description": "ABA routing number. Not PII (public). Stored in clear text as part of BK-2 construction."
+    },
+
+    "zip5": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9]{5}$",
+      "description": "5-digit postal code. Used for BK-6 name+zip secondary signal."
+    },
+
+    "country_code": {
+      "type": ["string", "null"],
+      "pattern": "^[A-Z]{2}$",
+      "description": "ISO 3166-1 alpha-2 country code. Required for international wire events (BK-7)."
+    },
+
+    "sec_code": {
+      "type": ["string", "null"],
+      "enum": ["PPD","WEB","TEL","CCD","CTX","ARC","POP","BOC", null],
+      "description": "ACH Standard Entry Class code. Drives entity_type inference (S-06-02)."
+    },
+
+    "swift_bic": {
+      "type": ["string", "null"],
+      "pattern": "^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$",
+      "description": "SWIFT BIC for international wire events. Validated against known BIC registry (S-12-02)."
+    },
+
+    "is_external_fi": {
+      "type": "boolean",
+      "default": false,
+      "description": "True when this party is at a non-JH financial institution. External parties receive EXTERNAL_STUB resolution."
+    },
+
+    "source_customer_id": {
+      "type": ["string", "null"],
+      "maxLength": 255,
+      "description": "Native customer/member ID from the source core system. Used to construct BK-5."
+    },
+
+    "pipeline_trace_id": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "OpenTelemetry trace ID propagated from ingest through entity write (S-09-01). Correlates logs, spans, and audit records."
+    }
+  },
+
+  "additionalProperties": false,
+
+  "examples": [
+    {
+      "_comment": "Example 1: ACH PPD originator — SilverLake JH member with full identity",
+      "event_id": "a1b2c3d4-0000-4000-8000-111111111111",
+      "fi_id": "fi_first_midwest",
+      "source_system": "eps_ach",
+      "source_product": "ach_ppd",
+      "source_transaction_id": "241231 9999999001",
+      "event_timestamp": "2026-02-15T14:30:00Z",
+      "party_role": "ORIGINATOR",
+      "entity_type": "INDIVIDUAL",
+      "routing_number": "071025661",
+      "zip5": "60601",
+      "sec_code": "PPD",
+      "is_external_fi": false,
+      "pipeline_trace_id": "f1e2d3c4-b5a6-4789-9abc-def012345678",
+      "blocking_keys": {
+        "bk1_fi_hash":    "a3f8c2e1d74b9056....",
+        "bk1_global_hash": "7c9e1a4f3b82d056....",
+        "bk2_token":      "4532015112830366:071025661",
+        "bk3_email_token": "e3b0c44298fc1c14....",
+        "bk4_phone_token": "9f86d081884c7d65....",
+        "bk5_core_cif_key": "silverlake:CIF0042991",
+        "bk6_name_zip":   "SMITH:60601",
+        "bk7_wire_token": null,
+        "bk8_pan_token":  null
+      }
+    },
+    {
+      "_comment": "Example 2: Zelle phone proxy destination — PayCenter, no account token",
+      "event_id": "b2c3d4e5-0000-4000-8000-222222222222",
+      "fi_id": "fi_first_midwest",
+      "source_system": "paycenter",
+      "source_product": "zelle",
+      "source_transaction_id": "ZL-2026-0215-98765",
+      "event_timestamp": "2026-02-15T14:30:01Z",
+      "party_role": "DESTINATION",
+      "entity_type": "INDIVIDUAL",
+      "routing_number": null,
+      "zip5": null,
+      "sec_code": null,
+      "is_external_fi": false,
+      "pipeline_trace_id": "f1e2d3c4-b5a6-4789-9abc-def012345678",
+      "blocking_keys": {
+        "bk1_fi_hash":    null,
+        "bk1_global_hash": null,
+        "bk2_token":      null,
+        "bk3_email_token": null,
+        "bk4_phone_token": "6e340b9cffb37a98....",
+        "bk5_core_cif_key": null,
+        "bk6_name_zip":   null,
+        "bk7_wire_token": null,
+        "bk8_pan_token":  null
+      }
+    },
+    {
+      "_comment": "Example 3: International wire beneficiary — BK-7, Tier 4 EXTERNAL_STUB",
+      "event_id": "c3d4e5f6-0000-4000-8000-333333333333",
+      "fi_id": "fi_commerce_bank",
+      "source_system": "jh_wires",
+      "source_product": "swift_corpay",
+      "source_transaction_id": "IMAD20260215MMQFMP5C000123",
+      "event_timestamp": "2026-02-15T09:15:00Z",
+      "party_role": "BENEFICIARY",
+      "entity_type": "BUSINESS",
+      "routing_number": null,
+      "country_code": "DE",
+      "swift_bic": "DEUTDEDB",
+      "sec_code": null,
+      "is_external_fi": true,
+      "pipeline_trace_id": "a9b8c7d6-e5f4-4321-abcd-ef0123456789",
+      "blocking_keys": {
+        "bk1_fi_hash":    null,
+        "bk1_global_hash": null,
+        "bk2_token":      null,
+        "bk3_email_token": null,
+        "bk4_phone_token": null,
+        "bk5_core_cif_key": null,
+        "bk6_name_zip":   "DEUTSCHEBANK GMBH:null",
+        "bk7_wire_token": "DEUTDEDB:1234abcdef5678...",
+        "bk8_pan_token":  null
+      }
+    }
+  ]
+}
